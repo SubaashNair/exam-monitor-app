@@ -3,6 +3,7 @@ package main
 import (
 	"image"
 	"image/color"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -12,6 +13,16 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/exam-gaurd/server/session"
+)
+
+// connectionStaleAfter — a student is considered "disconnected" if no frame
+// has arrived in this window. Frames are sent every 500 ms (UPDATE_INTERVAL
+// on the client), so 3 s ~= 6 missed frames before we flip the dot to red.
+const connectionStaleAfter = 3 * time.Second
+
+var (
+	dotConnected    = color.NRGBA{R: 16, G: 185, B: 129, A: 255}  // emerald-500
+	dotDisconnected = color.NRGBA{R: 220, G: 38, B: 38, A: 255}   // red-600
 )
 
 // Card colors
@@ -139,19 +150,46 @@ func layoutStudentImage(gtx layout.Context, th *material.Theme, student *Student
 	)
 }
 
+// connectionDot renders a small filled circle in green (connected) or red
+// (no recent frames). Sized at 10 dp so it sits comfortably next to the name.
+func connectionDot(gtx layout.Context, connected bool) layout.Dimensions {
+	size := gtx.Dp(unit.Dp(10))
+	col := dotConnected
+	if !connected {
+		col = dotDisconnected
+	}
+	defer clip.Ellipse{Max: image.Pt(size, size)}.Push(gtx.Ops).Pop()
+	paint.ColorOp{Color: col}.Add(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
+	return layout.Dimensions{Size: image.Pt(size, size)}
+}
+
 func layoutStudentInfo(gtx layout.Context, th *material.Theme, student *Student) layout.Dimensions {
+	// Connected if the Timestamp on the most recent frame is recent. The
+	// Student struct refreshes Timestamp via UpdateImage on every PICTURE
+	// frame the server accepts, so this reflects "frames flowing in the
+	// last N seconds" rather than just "TCP socket is open."
+	connected := !student.Timestamp.IsZero() && time.Since(student.Timestamp) < connectionStaleAfter
 	return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(
 			gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				label := material.Body1(th, student.Name)
-				label.Color = textPrimary
-				label.MaxLines = 1
-				label.TextSize = unit.Sp(14)
-				return label.Layout(gtx)
+				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return connectionDot(gtx, connected)
+					}),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						label := material.Body1(th, student.Name)
+						label.Color = textPrimary
+						label.MaxLines = 1
+						label.TextSize = unit.Sp(14)
+						return label.Layout(gtx)
+					}),
+				)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: unit.Dp(2)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				return layout.Inset{Top: unit.Dp(2), Left: unit.Dp(16)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					label := material.Body2(th, "ID: "+student.Id)
 					label.Color = textSecondary
 					label.MaxLines = 1
