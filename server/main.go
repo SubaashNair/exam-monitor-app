@@ -136,6 +136,9 @@ func run(w *app.Window, examsRoot string) error {
 	var list widget.List
 	list.Axis = layout.Vertical
 
+	updateNotice := NewUpdateNotice()
+	updateNotice.CheckAsync(w.Invalidate)
+
 	invalidateTicker := time.NewTicker(time.Second / 4)
 	go func() {
 		for range invalidateTicker.C {
@@ -153,6 +156,9 @@ func run(w *app.Window, examsRoot string) error {
 				layout.Flex{
 					Axis: layout.Vertical,
 				}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return updateNotice.Layout(gtx, th)
+					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return home.Layout(gtx, th)
 					}),
@@ -161,6 +167,9 @@ func run(w *app.Window, examsRoot string) error {
 				layout.Flex{
 					Axis: layout.Vertical,
 				}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return updateNotice.Layout(gtx, th)
+					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return dashboard.Layout(gtx, th, &list)
 					}),

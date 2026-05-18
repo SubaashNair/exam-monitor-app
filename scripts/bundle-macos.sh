@@ -48,7 +48,7 @@ mkdir -p "${macos}"
 echo "==> building Go binary"
 (
   cd "${repo_root}/${module_dir}"
-  go build -o "${macos}/${app_name}" .
+  go build -ldflags "-X main.Version=${version}" -o "${macos}/${app_name}" .
 )
 
 echo "==> writing Info.plist"

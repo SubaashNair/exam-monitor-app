@@ -121,6 +121,9 @@ func run(w *app.Window) error {
 		},
 	)
 
+	updateNotice := NewUpdateNotice()
+	updateNotice.CheckAsync(w.Invalidate)
+
 	joinView := NewJoinView(func(sid, name string, room int, roomName, serverIP, examToken string) {
 		state.swtichScreen("dashboard")
 		dashboard.SetRoomName(roomName)
@@ -141,6 +144,9 @@ func run(w *app.Window) error {
 				layout.Flex{
 					Axis: layout.Vertical,
 				}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return updateNotice.Layout(gtx, th)
+					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return joinView.Layout(gtx, th)
 					}),
@@ -149,6 +155,9 @@ func run(w *app.Window) error {
 				layout.Flex{
 					Axis: layout.Vertical,
 				}.Layout(gtx,
+					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+						return updateNotice.Layout(gtx, th)
+					}),
 					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 						return dashboard.Layout(gtx, th)
 					}),
