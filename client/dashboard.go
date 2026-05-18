@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"sync"
 	"time"
 
 	"gioui.org/layout"
@@ -27,11 +28,20 @@ type DashboardState struct {
 	errorMsg  string
 
 	// UI helpers wired in by main.go (Task 28)
-	overlay   *ui.LockOverlay
-	toast     *ui.ToastState
-	examName  string
-	roomName  string
-	examStart time.Time
+	overlay *ui.LockOverlay
+	toast   *ui.ToastState
+
+	// Exam state — written by the network reader goroutine (via OnExamStart /
+	// OnExamStop / SetRoomName) and read by the UI goroutine in Layout. On
+	// relaxed-memory-order CPUs (Apple Silicon, modern ARM) plain field
+	// writes are not visible across goroutines without explicit
+	// synchronization; mu protects all five fields below.
+	mu          sync.RWMutex
+	examName    string
+	roomName    string
+	examStart   time.Time
+	examEnded   bool
+	examEndedAt time.Time
 }
 
 var (
@@ -74,16 +84,41 @@ func (d *DashboardState) SetUIHelpers(o *ui.LockOverlay, t *ui.ToastState) {
 
 // OnExamStart records the exam name and the start wall-clock time.
 func (d *DashboardState) OnExamStart(name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.examName = name
 	d.examStart = time.Now()
+	d.examEnded = false
+	d.examEndedAt = time.Time{}
 }
 
 // SetRoomName records the room name the student joined (e.g. "Alpha" or a
 // custom string), shown in the status card.
-func (d *DashboardState) SetRoomName(name string) { d.roomName = name }
+func (d *DashboardState) SetRoomName(name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.roomName = name
+}
 
-// OnExamStop is a no-op; the banner hides itself once session state is Stopped.
-func (d *DashboardState) OnExamStop() {}
+// OnExamStop flags the exam as ended so Layout can render the stopped view
+// regardless of how the session state machine resolved the transition. This
+// is the dashboard's own source of truth — a defensive flag in case Apply()
+// silently rejected the EventExamStop transition or the new state isn't
+// visible to the UI goroutine yet.
+func (d *DashboardState) OnExamStop() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.examEnded = true
+	d.examEndedAt = time.Now()
+}
+
+// examInfo returns a consistent snapshot of all mu-protected fields so
+// callers can render without holding the lock across draw operations.
+func (d *DashboardState) examInfo() (name, room string, start time.Time, ended bool, endedAt time.Time) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.examName, d.roomName, d.examStart, d.examEnded, d.examEndedAt
+}
 
 // Layout branches on the current session state.
 func (d *DashboardState) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
@@ -99,7 +134,22 @@ func (d *DashboardState) Layout(gtx layout.Context, th *material.Theme) layout.D
 		d.client.Stop()
 	}
 
+	// The dashboard's own examEnded flag takes precedence over the session
+	// state machine. If we received TypeExamStop OR detected a disconnect
+	// after an exam was running, render the ended view regardless of what
+	// the state machine reports.
+	if _, _, _, ended, _ := d.examInfo(); ended {
+		return d.layoutEnded(gtx, th)
+	}
+
 	state := d.client.SessionState().State()
+
+	// If the client lost its connection mid-exam, show a reconnecting
+	// notice instead of the (now stale) Capturing UI.
+	if !d.client.IsConnected() && state != session.StateWaiting && state != session.StateStopped {
+		return d.layoutReconnecting(gtx, th)
+	}
+
 	switch state {
 	case session.StateWaiting:
 		return d.layoutWaiting(gtx, th)
@@ -110,6 +160,38 @@ func (d *DashboardState) Layout(gtx layout.Context, th *material.Theme) layout.D
 	default:
 		return layout.Dimensions{}
 	}
+}
+
+// layoutEnded renders the post-exam confirmation, shown after the instructor
+// stops the exam OR the connection dropped after an active exam started.
+func (d *DashboardState) layoutEnded(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	_, _, _, _, endedAt := d.examInfo()
+	endedText := "Your exam has ended."
+	if !endedAt.IsZero() {
+		endedText = "Your exam ended at " + endedAt.Format("15:04:05") + "."
+	}
+	return layout.UniformInset(unit.Dp(24)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(material.H4(th, "✓ Exam ended").Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+			layout.Rigid(material.Body1(th, endedText).Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+			layout.Rigid(material.Body2(th, "You may close this window.").Layout),
+		)
+	})
+}
+
+// layoutReconnecting renders the "we lost the instructor" notice. Shown when
+// the session state machine still thinks we're Capturing/Locked but the TCP
+// connection has dropped.
+func (d *DashboardState) layoutReconnecting(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	return layout.UniformInset(unit.Dp(24)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(material.H6(th, "⚠ Connection lost").Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+			layout.Rigid(material.Body1(th, "Trying to reconnect to your instructor…").Layout),
+		)
+	})
 }
 
 func (d *DashboardState) layoutWaiting(gtx layout.Context, th *material.Theme) layout.Dimensions {
@@ -123,19 +205,20 @@ func (d *DashboardState) layoutWaiting(gtx layout.Context, th *material.Theme) l
 }
 
 func (d *DashboardState) layoutCapturing(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	examName, _, examStart, _, _ := d.examInfo()
 	// Guard against rendering the banner before OnExamStart has populated
 	// examStart. time.Since(time.Time{}) saturates to ~292 years on amd64
 	// because time.Duration is an int64 nanosecond count, which would render
 	// as "2562047h47m16s elapsed".
 	elapsed := time.Duration(0)
-	if !d.examStart.IsZero() {
-		if since := time.Since(d.examStart); since >= 0 && since < 24*time.Hour {
+	if !examStart.IsZero() {
+		if since := time.Since(examStart); since >= 0 && since < 24*time.Hour {
 			elapsed = since
 		}
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.Banner(gtx, th, d.examName, "", elapsed)
+			return ui.Banner(gtx, th, examName, "", elapsed)
 		}),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return d.layoutStatusCard(gtx, th)
@@ -147,6 +230,7 @@ func (d *DashboardState) layoutCapturing(gtx layout.Context, th *material.Theme)
 // connection indicators, a divider, and an instructor-messages area that
 // becomes the active toast region when a message arrives.
 func (d *DashboardState) layoutStatusCard(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	_, roomName, _, _, _ := d.examInfo()
 	return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -164,8 +248,8 @@ func (d *DashboardState) layoutStatusCard(gtx layout.Context, th *material.Theme
 			layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				connectedText := "Connected"
-				if d.roomName != "" {
-					connectedText = "Connected (" + d.roomName + " room)"
+				if roomName != "" {
+					connectedText = "Connected (" + roomName + " room)"
 				}
 				return statusRow(gtx, th, "✓", statusOK, connectedText)
 			}),

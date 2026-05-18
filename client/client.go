@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	UPDATE_INTERVAL = time.Second / 2
+	UPDATE_INTERVAL = time.Second / 4 // 250 ms (~4 FPS) — bumped from 500 ms in v0.1.4 for smoother screen share
 	NAME            = 0
 	MESSAGE         = 1
 	PICTURE         = 2
@@ -105,6 +105,11 @@ func (client *Client) StudentName() string { return client.studentName }
 // FramesSent returns the total number of PICTURE frames the client has
 // successfully sent since the capture loop entered Capturing state.
 func (client *Client) FramesSent() int64 { return client.framesSent.Load() }
+
+// IsConnected reports whether the client currently has an active TCP
+// connection to the server. The dashboard uses this to show a
+// "Reconnecting…" notice when the connection drops mid-exam.
+func (client *Client) IsConnected() bool { return client.isConnected.Load() }
 
 func (client *Client) GetLastSentTime() time.Time {
 	if t := client.lastSentTime.Load(); t != nil {
