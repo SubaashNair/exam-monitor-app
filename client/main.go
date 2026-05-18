@@ -71,7 +71,7 @@ func main() {
 	go func() {
 		defer diag.RecoverPanic("client_window_goroutine")
 		w := new(app.Window)
-		w.Option(app.Title("Exam Guard Client"))
+		w.Option(app.Title("Exam Guard Client " + Version))
 		w.Option(app.Size(unit.Dp(400), unit.Dp(600)))
 		if err := run(w); err != nil {
 			log.Fatal(err)

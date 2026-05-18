@@ -76,7 +76,7 @@ func main() {
 		defer diag.RecoverPanic("server_window_goroutine")
 		w := new(app.Window)
 
-		w.Option(app.Title("Exam Monitor"))
+		w.Option(app.Title("Exam Monitor " + Version))
 		w.Option(app.Size(unit.Dp(1000), unit.Dp(700)))
 
 		if err := run(w, examsRoot); err != nil {
