@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -89,42 +90,44 @@ func (n *UpdateNotice) Layout(gtx layout.Context, th *material.Theme) layout.Dim
 	tag := n.tag
 	n.mu.Unlock()
 
-	bg := color.NRGBA{R: 37, G: 99, B: 235, A: 255}     // blue-600
-	fg := color.NRGBA{R: 255, G: 255, B: 255, A: 255}   // white
+	bg := color.NRGBA{R: 37, G: 99, B: 235, A: 255}      // blue-600
+	fg := color.NRGBA{R: 255, G: 255, B: 255, A: 255}    // white
 	subFg := color.NRGBA{R: 191, G: 219, B: 254, A: 255} // blue-200
 
-	return layout.Stack{}.Layout(gtx,
-		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						lbl := material.Body2(th, "↑ Update available: "+tag)
-						lbl.Color = fg
-						return lbl.Layout(gtx)
-					}),
-					layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						btn := material.Button(th, n.BtnOpen, "Download")
-						btn.Background = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
-						btn.Color = bg
-						return btn.Layout(gtx)
-					}),
-					layout.Flexed(1, layout.Spacer{}.Layout),
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						btn := material.Button(th, n.BtnDismiss, "Dismiss")
-						btn.Background = bg
-						btn.Color = subFg
-						return btn.Layout(gtx)
-					}),
-				)
-			})
-		}),
-		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-			paint.ColorOp{Color: bg}.Add(gtx.Ops)
-			paint.PaintOp{}.Add(gtx.Ops)
-			return layout.Dimensions{Size: gtx.Constraints.Max}
-		}),
-	)
+	// Mirror the op.Record pattern from ui/banner.go: render content into
+	// a macro to MEASURE its natural dimensions, paint the background sized
+	// to exactly that measurement, then replay content on top. Avoids the
+	// 'background paints over the parent's full max' bug that the naive
+	// layout.Stack with Expanded fillRect produces in a Vertical Flex Rigid.
+	macro := op.Record(gtx.Ops)
+	contentDims := layout.UniformInset(unit.Dp(10)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				lbl := material.Body2(th, "↑ Update available: "+tag)
+				lbl.Color = fg
+				return lbl.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				btn := material.Button(th, n.BtnOpen, "Download")
+				btn.Background = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+				btn.Color = bg
+				return btn.Layout(gtx)
+			}),
+			layout.Flexed(1, layout.Spacer{}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				btn := material.Button(th, n.BtnDismiss, "Dismiss")
+				btn.Background = bg
+				btn.Color = subFg
+				return btn.Layout(gtx)
+			}),
+		)
+	})
+	contentCall := macro.Stop()
+
+	paint.FillShape(gtx.Ops, bg, clip.Rect{Max: contentDims.Size}.Op())
+	contentCall.Add(gtx.Ops)
+
+	return contentDims
 }
