@@ -5,6 +5,7 @@ package capture
 import (
 	"fmt"
 	"image"
+	"image/draw"
 
 	"github.com/kbinani/screenshot"
 )
@@ -13,6 +14,10 @@ import (
 // (Screen Recording) permission: without it, CGDisplayCreateImage returns a
 // fully-black frame and gives no error. We detect that on the first non-error
 // frame and convert it to ErrPermissionDenied.
+//
+// Multi-display: all active displays are composited into a single image at
+// their physical layout positions, so a student can't hide content by
+// dragging it to a secondary monitor.
 func New() (Capturer, error) {
 	if screenshot.NumActiveDisplays() == 0 {
 		return nil, ErrNoDisplay
@@ -29,19 +34,62 @@ func (c *macCapturer) Capture() (image.Image, error) {
 	if c.permissionDenied {
 		return nil, ErrPermissionDenied
 	}
-	bounds := screenshot.GetDisplayBounds(0)
-	img, err := screenshot.CaptureRect(bounds)
-	if err != nil {
-		return nil, fmt.Errorf("macos capture: %w", err)
+
+	n := screenshot.NumActiveDisplays()
+	if n == 0 {
+		return nil, ErrNoDisplay
 	}
+
+	// Single-display fast path (matches pre-v0.1.8 behaviour exactly).
+	if n == 1 {
+		img, err := screenshot.CaptureRect(screenshot.GetDisplayBounds(0))
+		if err != nil {
+			return nil, fmt.Errorf("macos capture: %w", err)
+		}
+		if !c.firstFrameChecked {
+			c.firstFrameChecked = true
+			if isAllBlack(img) {
+				c.permissionDenied = true
+				return nil, ErrPermissionDenied
+			}
+		}
+		return img, nil
+	}
+
+	// Multi-display: compute the union of all display bounds (macOS allows
+	// negative origins, e.g. a monitor to the left of the primary), then
+	// composite each display at its offset within the union.
+	union := screenshot.GetDisplayBounds(0)
+	for i := 1; i < n; i++ {
+		union = union.Union(screenshot.GetDisplayBounds(i))
+	}
+	canvas := image.NewRGBA(image.Rect(0, 0, union.Dx(), union.Dy()))
+
+	var firstSub image.Image
+	for i := 0; i < n; i++ {
+		b := screenshot.GetDisplayBounds(i)
+		sub, err := screenshot.CaptureRect(b)
+		if err != nil {
+			// Skip individual display failures — better to ship a
+			// partial composite than fail the whole frame.
+			continue
+		}
+		if firstSub == nil {
+			firstSub = sub
+		}
+		offset := b.Min.Sub(union.Min)
+		target := image.Rect(offset.X, offset.Y, offset.X+b.Dx(), offset.Y+b.Dy())
+		draw.Draw(canvas, target, sub, sub.Bounds().Min, draw.Src)
+	}
+
 	if !c.firstFrameChecked {
 		c.firstFrameChecked = true
-		if isAllBlack(img) {
+		if firstSub == nil || isAllBlack(firstSub) {
 			c.permissionDenied = true
 			return nil, ErrPermissionDenied
 		}
 	}
-	return img, nil
+	return canvas, nil
 }
 
 func (c *macCapturer) Close() error { return nil }
