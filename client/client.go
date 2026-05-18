@@ -37,6 +37,7 @@ const (
 type Client struct {
 	isRunning      atomic.Bool
 	isConnected    atomic.Bool
+	framesSent     atomic.Int64
 	socket         *net.TCPConn
 	lastSentTime   atomic.Value
 	onConnected    func()
@@ -100,6 +101,10 @@ func (client *Client) SessionState() *session.StateMachine { return client.sessi
 
 // StudentName returns the display name stored when Start was called.
 func (client *Client) StudentName() string { return client.studentName }
+
+// FramesSent returns the total number of PICTURE frames the client has
+// successfully sent since the capture loop entered Capturing state.
+func (client *Client) FramesSent() int64 { return client.framesSent.Load() }
 
 func (client *Client) GetLastSentTime() time.Time {
 	if t := client.lastSentTime.Load(); t != nil {
@@ -204,6 +209,7 @@ func (client *Client) Start(studentId, studentName string, port int, updateUI fu
 					if err != nil {
 						break
 					}
+					client.framesSent.Add(1)
 					client.lastSentTime.Store(time.Now())
 					updateUI()
 				}

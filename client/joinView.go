@@ -12,15 +12,11 @@ import (
 type JoinView struct {
 	IdEditor       *widget.Editor
 	NameEditor     *widget.Editor
-	RoomEditor     *widget.Editor
+	RoomPicker     *RoomDropdown
 	ServerIPEditor *widget.Editor
 	TokenEditor    *widget.Editor
 	BtnStart       *widget.Clickable
-	BtnAlpha       *widget.Clickable
-	BtnBravo       *widget.Clickable
-	BtnCharlie     *widget.Clickable
-	BtnDelta       *widget.Clickable
-	OnClick        func(sid, name string, room int, serverIP, examToken string)
+	OnClick        func(sid, name string, room int, roomName, serverIP, examToken string)
 
 	idError    string
 	nameError  string
@@ -31,34 +27,26 @@ type JoinView struct {
 	submitAttempted bool
 }
 
-func NewJoinView(start func(sid, name string, room int, serverIP, examToken string)) *JoinView {
+func NewJoinView(start func(sid, name string, room int, roomName, serverIP, examToken string)) *JoinView {
 	joinView := JoinView{
 		IdEditor:       new(widget.Editor),
 		NameEditor:     new(widget.Editor),
-		RoomEditor:     new(widget.Editor),
+		RoomPicker:     NewRoomDropdown(),
 		ServerIPEditor: new(widget.Editor),
 		TokenEditor:    new(widget.Editor),
 		BtnStart:       new(widget.Clickable),
-		BtnAlpha:       new(widget.Clickable),
-		BtnBravo:       new(widget.Clickable),
-		BtnCharlie:     new(widget.Clickable),
-		BtnDelta:       new(widget.Clickable),
 		OnClick:        start,
 	}
 
-	// Room now accepts any string (presets + custom). RoomNameToPort handles
-	// the mapping to a network port consistently with the server.
-
 	joinView.IdEditor.Submit = true
 	joinView.NameEditor.Submit = true
-	joinView.RoomEditor.Submit = true
 	joinView.ServerIPEditor.Submit = true
 	joinView.TokenEditor.Submit = true
 
 	if data, err := LoadFormData(); err == nil && data != nil {
 		joinView.IdEditor.SetText(data.StudentID)
 		joinView.NameEditor.SetText(data.Name)
-		joinView.RoomEditor.SetText(data.Room)
+		joinView.RoomPicker.SetValue(data.Room)
 		joinView.ServerIPEditor.SetText(data.ServerIP)
 	}
 
@@ -84,7 +72,7 @@ func (h *JoinView) validate() bool {
 		valid = false
 	}
 
-	if strings.TrimSpace(h.RoomEditor.Text()) == "" {
+	if strings.TrimSpace(h.RoomPicker.Value()) == "" {
 		h.roomError = "Room is required."
 		valid = false
 	}
@@ -113,7 +101,7 @@ func (h *JoinView) isValid() bool {
 	if strings.TrimSpace(h.NameEditor.Text()) == "" {
 		return false
 	}
-	if strings.TrimSpace(h.RoomEditor.Text()) == "" {
+	if strings.TrimSpace(h.RoomPicker.Value()) == "" {
 		return false
 	}
 	if strings.TrimSpace(h.TokenEditor.Text()) == "" {
@@ -125,7 +113,7 @@ func (h *JoinView) isValid() bool {
 func (h *JoinView) handleSubmit() {
 	h.submitAttempted = true
 	if h.validate() {
-		roomName := strings.TrimSpace(h.RoomEditor.Text())
+		roomName := strings.TrimSpace(h.RoomPicker.Value())
 		room := RoomNameToPort(roomName)
 		studentID := strings.TrimSpace(h.IdEditor.Text())
 		name := strings.TrimSpace(h.NameEditor.Text())
@@ -135,29 +123,13 @@ func (h *JoinView) handleSubmit() {
 		// Token is NOT persisted across sessions (spec §6.3).
 		SaveFormData(studentID, name, roomName, serverIP)
 
-		h.OnClick(studentID, name, room, serverIP, examToken)
+		h.OnClick(studentID, name, room, roomName, serverIP, examToken)
 	}
 }
 
 func (h *JoinView) Layout(gtx layout.Context, th *material.Theme) layout.Dimensions {
 	if h.BtnStart.Clicked(gtx) {
 		h.handleSubmit()
-	}
-
-	// Preset room buttons — set the room editor text on click.
-	for _, pair := range []struct {
-		btn  *widget.Clickable
-		name string
-	}{
-		{h.BtnAlpha, "Alpha"},
-		{h.BtnBravo, "Bravo"},
-		{h.BtnCharlie, "Charlie"},
-		{h.BtnDelta, "Delta"},
-	} {
-		if pair.btn.Clicked(gtx) {
-			h.RoomEditor.SetText(pair.name)
-			h.roomError = ""
-		}
 	}
 
 	var idErr, nameErr, roomErr, ipErr, tokenErr string
@@ -201,20 +173,22 @@ func (h *JoinView) Layout(gtx layout.Context, th *material.Theme) layout.Dimensi
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return FormRow(gtx, "Room", th, func(gtx layout.Context) layout.Dimensions {
-						return TextEditorWithError(th, h.RoomEditor, "Alpha, Bravo, or your own room name", roomErr)(gtx)
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return h.RoomPicker.Layout(gtx, th)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								if roomErr == "" {
+									return layout.Dimensions{}
+								}
+								return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									lbl := material.Body2(th, roomErr)
+									lbl.Color = ErrorColor
+									return lbl.Layout(gtx)
+								})
+							}),
+						)
 					})
-				}),
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Spacer{Height: unit.Dp(8)}.Layout(gtx)
-				}),
-				// Preset room buttons (Alpha / Bravo / Charlie / Delta)
-				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					return layout.Flex{Axis: layout.Horizontal, Spacing: layout.SpaceBetween}.Layout(gtx,
-						layout.Rigid(material.Button(th, h.BtnAlpha, "Alpha").Layout),
-						layout.Rigid(material.Button(th, h.BtnBravo, "Bravo").Layout),
-						layout.Rigid(material.Button(th, h.BtnCharlie, "Charlie").Layout),
-						layout.Rigid(material.Button(th, h.BtnDelta, "Delta").Layout),
-					)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Spacer{Height: unit.Dp(16)}.Layout(gtx)

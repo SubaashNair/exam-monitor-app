@@ -121,8 +121,9 @@ func run(w *app.Window) error {
 		},
 	)
 
-	joinView := NewJoinView(func(sid, name string, room int, serverIP, examToken string) {
+	joinView := NewJoinView(func(sid, name string, room int, roomName, serverIP, examToken string) {
 		state.swtichScreen("dashboard")
+		dashboard.SetRoomName(roomName)
 		dashboard.client.SetManualServerIP(serverIP)
 		dashboard.client.SetExamToken(examToken)
 		dashboard.client.Start(sid, name, room, func() {
