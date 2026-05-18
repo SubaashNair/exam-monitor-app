@@ -1,0 +1,211 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.component }} (${{ matrix.os }} ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Apple Silicon
+          - runner: macos-14
+            os: macos
+            arch: arm64
+            goarch: arm64
+            component: client
+            app_name: ExamMonitorStudent
+          - runner: macos-14
+            os: macos
+            arch: arm64
+            goarch: arm64
+            component: server
+            app_name: ExamMonitorTeacher
+          # macOS Intel (cross-compiled on Apple Silicon runner)
+          - runner: macos-14
+            os: macos
+            arch: amd64
+            goarch: amd64
+            component: client
+            app_name: ExamMonitorStudent
+          - runner: macos-14
+            os: macos
+            arch: amd64
+            goarch: amd64
+            component: server
+            app_name: ExamMonitorTeacher
+          # Linux
+          - runner: ubuntu-22.04
+            os: linux
+            arch: amd64
+            goarch: amd64
+            component: client
+          - runner: ubuntu-22.04
+            os: linux
+            arch: amd64
+            goarch: amd64
+            component: server
+          # Windows
+          - runner: windows-2022
+            os: windows
+            arch: amd64
+            goarch: amd64
+            component: client
+          - runner: windows-2022
+            os: windows
+            arch: amd64
+            goarch: amd64
+            component: server
+
+    env:
+      COMPONENT: ${{ matrix.component }}
+      OS_LABEL: ${{ matrix.os }}
+      ARCH_LABEL: ${{ matrix.arch }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: ${{ matrix.component }}/go.sum
+
+      - name: Derive version from tag
+        id: ver
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: echo "version=${TAG_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # ---- Linux: install Gio runtime/build deps -----------------------------
+      - name: Install Linux deps
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libx11-dev libxext-dev libxdamage-dev
+
+      # ---- macOS: build via existing bundle script ---------------------------
+      - name: Build macOS .app
+        if: matrix.os == 'macos'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/bundle-macos.sh "$COMPONENT"
+
+      - name: Package macOS
+        if: matrix.os == 'macos'
+        env:
+          APP_NAME: ${{ matrix.app_name }}
+        run: |
+          cd dist
+          zip -r "../exam-monitor-${COMPONENT}-macos-${ARCH_LABEL}.zip" "${APP_NAME}.app"
+
+      # ---- Linux: native build -----------------------------------------------
+      - name: Build Linux
+        if: matrix.os == 'linux'
+        working-directory: ${{ matrix.component }}
+        run: go build -trimpath -ldflags "-s -w" -o "$COMPONENT" .
+
+      - name: Package Linux
+        if: matrix.os == 'linux'
+        run: |
+          tar -czf "exam-monitor-${COMPONENT}-linux-${ARCH_LABEL}.tar.gz" \
+            -C "$COMPONENT" "$COMPONENT"
+
+      # ---- Windows: native build with GUI subsystem --------------------------
+      - name: Build Windows
+        if: matrix.os == 'windows'
+        working-directory: ${{ matrix.component }}
+        shell: bash
+        run: |
+          go build -trimpath -ldflags "-s -w -H=windowsgui" \
+            -o "${COMPONENT}.exe" .
+
+      - name: Package Windows
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          7z a "exam-monitor-${COMPONENT}-windows-${ARCH_LABEL}.zip" \
+            "${COMPONENT}/${COMPONENT}.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: exam-monitor-${{ matrix.component }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: exam-monitor-${{ matrix.component }}-${{ matrix.os }}-${{ matrix.arch }}.*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: false
+          body: |
+            ## Installation
+
+            Binaries are **unsigned** — first-launch instructions below.
+
+            ### macOS
+
+            1. Download `exam-monitor-<student|teacher>-macos-<arm64|amd64>.zip`.
+               - Apple Silicon Macs (M1/M2/M3/M4): use `arm64`.
+               - Intel Macs: use `amd64`.
+            2. Unzip — you'll get `ExamMonitorStudent.app` or `ExamMonitorTeacher.app`.
+            3. First launch: right-click the `.app` → **Open**. Gatekeeper will warn that the
+               developer is unverified — click **Open** to confirm. Subsequent launches work
+               normally via double-click.
+
+               Alternative (CLI): `xattr -d com.apple.quarantine /path/to/ExamMonitor*.app`
+            4. On the student client, macOS will prompt for **Screen Recording** permission on
+               first capture attempt. Grant it in *System Settings → Privacy & Security → Screen
+               Recording* and relaunch.
+
+            ### Windows
+
+            1. Download `exam-monitor-<client|server>-windows-amd64.zip` and extract.
+            2. Double-click `client.exe` or `server.exe`. Windows SmartScreen will say
+               **"Windows protected your PC"** — click **More info → Run anyway**.
+            3. The local network firewall will prompt on first run; allow it for *Private*
+               networks.
+
+            ### Linux (Ubuntu 22.04+, recent Fedora, Arch)
+
+            1. Download `exam-monitor-<client|server>-linux-amd64.tar.gz` and extract.
+            2. Wayland users: install one of `grim`, `gnome-screenshot`, or `spectacle` first
+               (X11 users don't need this).
+            3. `chmod +x client` (or `server`) and run.
+
+            ---
+
+            Build verification (each platform tested in CI with `go test -race`):
+            see the Actions tab in this repository.

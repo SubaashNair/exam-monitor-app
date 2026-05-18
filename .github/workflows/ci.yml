@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test ${{ matrix.module }} on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14, ubuntu-22.04, windows-2022]
+        module: [client, server]
+
+    env:
+      MODULE: ${{ matrix.module }}
+      CGO_ENABLED: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libx11-dev libxext-dev libxdamage-dev
+
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        shell: bash
+        run: go test -race -cover ./...
+
+      - name: Build (smoke)
+        working-directory: ${{ matrix.module }}
+        shell: bash
+        run: go build ./...
