@@ -71,6 +71,7 @@ jobs:
       ARCH_LABEL: ${{ matrix.arch }}
       GOARCH: ${{ matrix.goarch }}
       CGO_ENABLED: '1'
+      GOTOOLCHAIN: local
 
     steps:
       - uses: actions/checkout@v4
@@ -93,8 +94,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libvulkan-dev libxkbcommon-x11-dev libx11-xcb-dev \
-            libx11-dev libxext-dev libxdamage-dev
+            libvulkan-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-xcb-dev libx11-dev libxext-dev libxdamage-dev \
+            libwayland-dev libegl1-mesa-dev libgles2-mesa-dev \
+            libxcursor-dev libxfixes-dev libxinerama-dev libxrandr-dev libxi-dev
 
       # ---- macOS: build via existing bundle script ---------------------------
       - name: Build macOS .app
