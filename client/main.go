@@ -141,25 +141,41 @@ func run(w *app.Window) error {
 			gtx := app.NewContext(&ops, typ)
 			switch state.currentScreen {
 			case "join":
-				layout.Flex{
-					Axis: layout.Vertical,
-				}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return updateNotice.Layout(gtx, th)
+				layout.Stack{}.Layout(gtx,
+					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints.Min = gtx.Constraints.Max
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return updateNotice.Layout(gtx, th)
+							}),
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return joinView.Layout(gtx, th)
+							}),
+						)
 					}),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return joinView.Layout(gtx, th)
+					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+						return layout.SE.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return versionBadge(gtx, th)
+						})
 					}),
 				)
 			default:
-				layout.Flex{
-					Axis: layout.Vertical,
-				}.Layout(gtx,
-					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return updateNotice.Layout(gtx, th)
+				layout.Stack{}.Layout(gtx,
+					layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints.Min = gtx.Constraints.Max
+						return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return updateNotice.Layout(gtx, th)
+							}),
+							layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+								return dashboard.Layout(gtx, th)
+							}),
+						)
 					}),
-					layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-						return dashboard.Layout(gtx, th)
+					layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+						return layout.SE.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							return versionBadge(gtx, th)
+						})
 					}),
 				)
 			}
