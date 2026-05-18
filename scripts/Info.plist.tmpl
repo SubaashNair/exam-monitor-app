@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>__APP_NAME__</string>
+	<key>CFBundleExecutable</key>
+	<string>__EXECUTABLE__</string>
+	<key>CFBundleIdentifier</key>
+	<string>__BUNDLE_ID__</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>__APP_NAME__</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__BUILD_NUMBER__</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.education</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.15</string>
+	<!--
+	NSScreenCaptureDescription is the KEY that fixes the macOS blank-frame
+	bug: without this entry, CoreGraphics returns black pixels silently and
+	the OS never prompts the user for Screen Recording permission.
+	-->
+	<key>NSScreenCaptureDescription</key>
+	<string>__APP_NAME__ needs to capture your screen so your instructor can monitor your work during the exam.</string>
+	<!--
+	NSAppTransportSecurity: allows plain-TCP connections to the LAN server
+	without HTTPS gymnastics. The wire protocol is a custom binary frame
+	over TCP, not HTTP, but iOS/macOS apply ATS rules to all networking.
+	-->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!--
+	NSLocalNetworkUsageDescription is required on macOS 15+ for any app
+	that initiates connections to local-network peers (Bonjour / multicast
+	/ broadcast / direct LAN IPs). Without it the OS silently blocks
+	connections.
+	-->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>__APP_NAME__ connects to your instructor's exam-monitor server on the local network.</string>
+	<!--
+	NSBonjourServices declares the mDNS service type we browse for.
+	macOS 14+ enforces this declaration for sandboxed and notarised apps.
+	-->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_examguard._tcp</string>
+	</array>
+</dict>
+</plist>

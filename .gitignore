@@ -1,0 +1,34 @@
+# Compiled Go binaries (rebuilt locally per module)
+/client/client
+/server/server
+*.exe
+*.exe~
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+
+# Test + coverage output
+*.test
+coverage.out
+coverage.html
+*.prof
+*.cover
+
+# macOS bundle output
+/dist/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Local environment overrides
+.env
+.env.local
+*.local
