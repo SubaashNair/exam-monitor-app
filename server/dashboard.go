@@ -631,7 +631,11 @@ func (d *DashboardState) sendMessage(toAll bool, targetID, body string) {
 	}
 	msg := controlframe.BroadcastMsg{From: "Instructor", Body: body, TargetStudentID: target}
 	if toAll {
-		_ = d.server.BroadcastControl(controlframe.TypeBroadcastMsg, msg)
+		// Use BroadcastControlAll so the message reaches every connected
+		// client regardless of session state. BroadcastControl filters to
+		// Capturing+Locked, which races against unprocessed state-acks right
+		// after exam start, dropping messages to clients in transit.
+		_ = d.server.BroadcastControlAll(controlframe.TypeBroadcastMsg, msg)
 	} else {
 		if err := d.server.SendToStudent(target, controlframe.TypeBroadcastMsg, msg); err != nil {
 			slog.Warn("send to student failed", "id", target, "err", err)

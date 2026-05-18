@@ -3,7 +3,6 @@
 package ui
 
 import (
-	"fmt"
 	"image/color"
 	"time"
 
@@ -29,20 +28,31 @@ var DefaultBannerColors = BannerColors{
 // be empty; elapsed is the duration since EXAM_START.
 func Banner(gtx layout.Context, th *material.Theme, examName, instructor string, elapsed time.Duration) layout.Dimensions {
 	bg := DefaultBannerColors.Background
-	// Paint a coloured rectangle and overlay the text. Gio's idiomatic way
-	// to paint a solid background behind a layout is paint.FillShape with a
-	// clip.Rect; for Phase 1 we keep it minimal with material.H6 on a
-	// material.Card-like wrapper.
-	title := material.H6(th, fmt.Sprintf("🔴 MONITORING ACTIVE — %s", examName))
+
+	titleText := "🔴 MONITORING ACTIVE"
+	if examName != "" {
+		titleText = titleText + " — " + examName
+	}
+	title := material.H6(th, titleText)
 	title.Color = DefaultBannerColors.Foreground
-	sub := material.Body2(th, fmt.Sprintf("Instructor: %s · %s elapsed", instructor, elapsed.Truncate(time.Second)))
+
+	elapsedText := elapsed.Truncate(time.Second).String() + " elapsed"
+	subText := elapsedText
+	if instructor != "" {
+		subText = "Instructor: " + instructor + " · " + elapsedText
+	}
+	sub := material.Body2(th, subText)
 	sub.Color = DefaultBannerColors.Foreground
 
+	// Build the content first so the Stack sizes itself to the content's
+	// natural height (Stacked) rather than the parent's max-Y. Expanded then
+	// paints the background within that bounded area.
 	return layout.Stack{}.Layout(gtx,
-		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
-			return fillRect(gtx, bg)
-		}),
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			// Force the content to span the full available width so the
+			// background paints across the row rather than just behind the
+			// text glyphs.
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			return layout.UniformInset(unit.Dp(12)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 					layout.Rigid(title.Layout),
@@ -50,6 +60,9 @@ func Banner(gtx layout.Context, th *material.Theme, examName, instructor string,
 					layout.Rigid(sub.Layout),
 				)
 			})
+		}),
+		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+			return fillRect(gtx, bg)
 		}),
 	)
 }

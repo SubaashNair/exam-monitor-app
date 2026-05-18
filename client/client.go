@@ -257,9 +257,9 @@ func (client *Client) captureScreen() ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
-	resizedImg := resize.Resize(720, 0, img, resize.NearestNeighbor)
+	resizedImg := resize.Resize(720, 0, img, resize.Lanczos3)
 
-	options := jpeg.Options{Quality: 60}
+	options := jpeg.Options{Quality: 80}
 	if err := jpeg.Encode(&buf, resizedImg, &options); err != nil {
 		return nil, err
 	}
@@ -432,10 +432,15 @@ func (client *Client) dispatchControl(typ uint16, body []byte) {
 		var p controlframe.ExamStart
 		_ = controlframe.Unmarshal(body, &p)
 		client.examName = p.ExamName
-		_, _ = client.sessionState.Apply(session.EventExamStart)
+		// Fire the dashboard callback BEFORE applying the state transition.
+		// If the UI thread happens to render between Apply() and the callback,
+		// it would see state=Capturing with examStart=zero, producing a
+		// saturated elapsed-time display. Setting examStart first avoids
+		// that window.
 		if client.onExamStart != nil {
 			client.onExamStart(p.ExamName)
 		}
+		_, _ = client.sessionState.Apply(session.EventExamStart)
 		_ = client.sendStateAck(controlframe.TypeStateCapturing)
 	case controlframe.TypeExamStop:
 		_, _ = client.sessionState.Apply(session.EventExamStop)

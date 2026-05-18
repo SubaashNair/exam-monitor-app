@@ -107,9 +107,19 @@ func (d *DashboardState) layoutWaiting(gtx layout.Context, th *material.Theme) l
 }
 
 func (d *DashboardState) layoutCapturing(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	// Guard against rendering the banner before OnExamStart has populated
+	// examStart. time.Since(time.Time{}) saturates to ~292 years on amd64
+	// because time.Duration is an int64 nanosecond count, which would render
+	// as "2562047h47m16s elapsed".
+	elapsed := time.Duration(0)
+	if !d.examStart.IsZero() {
+		if since := time.Since(d.examStart); since >= 0 && since < 24*time.Hour {
+			elapsed = since
+		}
+	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return ui.Banner(gtx, th, d.examName, "Instructor", time.Since(d.examStart))
+			return ui.Banner(gtx, th, d.examName, "", elapsed)
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			if d.toast != nil {
