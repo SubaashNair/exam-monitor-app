@@ -268,7 +268,11 @@ func (client *Client) captureScreen() ([]byte, error) {
 	}
 
 	var buf bytes.Buffer
-	resizedImg := resize.Resize(720, 0, img, resize.Lanczos3)
+	// 1280px wide gives ~3× more pixels than 720, so text/icons on the
+	// teacher's enlarged-tile view look noticeably sharper. At JPEG Q=80
+	// each frame is ~100 KB; at 4 FPS that's ~400 KB/s per student which
+	// is trivial on any classroom LAN.
+	resizedImg := resize.Resize(1280, 0, img, resize.Lanczos3)
 
 	options := jpeg.Options{Quality: 80}
 	if err := jpeg.Encode(&buf, resizedImg, &options); err != nil {

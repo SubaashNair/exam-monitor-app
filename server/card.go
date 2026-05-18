@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -96,37 +97,57 @@ func StudentCard(gtx layout.Context, th *material.Theme, student *Student, width
 }
 
 func layoutStudentImage(gtx layout.Context, th *material.Theme, student *Student, width int, imgCache *ImageCacheManager) layout.Dimensions {
-	// Calculate image container dimensions (16:9 aspect ratio)
+	// Lock the image area to a 16:9 box regardless of source aspect ratio.
+	// Both the placeholder and the rendered image return this same size, so
+	// the surrounding card stays a consistent shape across the join
+	// → capturing → stopped lifecycle (no more "card grows / white space
+	// appears" when frames first arrive).
 	imgHeight := width * 9 / 16
 
 	// Stack layers the image (or placeholder) beneath the state badge.
 	return layout.Stack{}.Layout(gtx,
 		layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+			// Always fill the 16:9 area with the placeholder colour first;
+			// any letterbox bars from Fit-Contain will pick up this colour.
+			boxRect := image.Rect(0, 0, width, imgHeight)
+			paint.FillShape(gtx.Ops, placeholderBg, clip.RRect{
+				Rect: boxRect,
+				NE:   6, NW: 6, SE: 6, SW: 6,
+			}.Op(gtx.Ops))
+
 			if student.Image == nil {
-				// Placeholder when no image
-				rect := clip.RRect{
-					Rect: image.Rect(0, 0, width, imgHeight),
-					NE:   6, NW: 6, SE: 6, SW: 6,
-				}
-				paint.FillShape(gtx.Ops, placeholderBg, rect.Op(gtx.Ops))
 				return layout.Dimensions{Size: image.Pt(width, imgHeight)}
 			}
 
-			// Draw rounded image container
 			imgOp := imgCache.GetImageOp(student)
 			imgSize := student.Image.Bounds().Size()
-			scale := float32(width) / float32(imgSize.X)
 
-			// Clip to rounded rectangle
+			// Fit-Contain: pick the smaller of the two scale factors so the
+			// image fits entirely inside the 16:9 box without cropping.
+			// Letterbox bars (top/bottom or left/right) appear when the
+			// source aspect ratio differs from 16:9.
+			scaleX := float32(width) / float32(imgSize.X)
+			scaleY := float32(imgHeight) / float32(imgSize.Y)
+			scale := scaleX
+			if scaleY < scaleX {
+				scale = scaleY
+			}
+			renderedX := int(float32(imgSize.X) * scale)
+			renderedY := int(float32(imgSize.Y) * scale)
+			offsetX := (width - renderedX) / 2
+			offsetY := (imgHeight - renderedY) / 2
+
+			// Clip everything we draw next to the rounded 16:9 box.
 			defer clip.RRect{
-				Rect: image.Rect(0, 0, width, int(float32(imgSize.Y)*scale)),
+				Rect: boxRect,
 				NE:   6, NW: 6, SE: 6, SW: 6,
 			}.Push(gtx.Ops).Pop()
 
-			return widget.Image{
-				Src:   imgOp,
-				Scale: scale,
-			}.Layout(gtx)
+			// Translate to centre the image; draw at the computed scale.
+			defer op.Offset(image.Pt(offsetX, offsetY)).Push(gtx.Ops).Pop()
+			widget.Image{Src: imgOp, Scale: scale}.Layout(gtx)
+
+			return layout.Dimensions{Size: image.Pt(width, imgHeight)}
 		}),
 		layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 			// Render the state badge in the top-right corner.
