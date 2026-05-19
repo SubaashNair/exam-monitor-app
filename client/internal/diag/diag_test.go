@@ -14,6 +14,10 @@ func newTestLogger(t *testing.T) *Logger {
 	if err != nil {
 		t.Fatalf("newAt: %v", err)
 	}
+	// On Windows, t.TempDir() cleanup fails ("file is being used by another
+	// process") if the Logger's file handle is still open. Close it before
+	// the cleanup phase runs.
+	t.Cleanup(func() { _ = l.Close() })
 	return l
 }
 
