@@ -26,6 +26,7 @@ type DashboardState struct {
 	BtnRetry          *widget.Clickable
 	BtnCancel         *widget.Clickable
 	BtnChangeSettings *widget.Clickable
+	BtnRejoinNow      *widget.Clickable
 	Stop              func()
 	UpdateUI          func()
 	errorMsg  string
@@ -62,6 +63,7 @@ func NewDashboardState(stop func(), updateUI func()) *DashboardState {
 		BtnRetry:          new(widget.Clickable),
 		BtnCancel:         new(widget.Clickable),
 		BtnChangeSettings: new(widget.Clickable),
+		BtnRejoinNow:      new(widget.Clickable),
 		Stop:              stop,
 		UpdateUI:          updateUI,
 	}
@@ -142,6 +144,11 @@ func (d *DashboardState) Layout(gtx layout.Context, th *material.Theme) layout.D
 		d.errorMsg = ""
 		d.client.Stop()
 		d.Stop()
+	}
+	// Try again now: short-circuit retry backoff without re-entering form data.
+	if d.BtnRejoinNow.Clicked(gtx) {
+		d.errorMsg = ""
+		d.client.Rejoin()
 	}
 
 	// The dashboard's own examEnded flag takes precedence over the session
@@ -230,7 +237,13 @@ func (d *DashboardState) layoutReconnecting(gtx layout.Context, th *material.The
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 			layout.Rigid(material.Body1(th, subText).Layout),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
-			layout.Rigid(material.Button(th, d.BtnChangeSettings, "Change settings").Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					layout.Rigid(material.Button(th, d.BtnRejoinNow, "Try again now").Layout),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+					layout.Rigid(material.Button(th, d.BtnChangeSettings, "Change settings").Layout),
+				)
+			}),
 		)
 	})
 }
@@ -247,7 +260,13 @@ func (d *DashboardState) layoutRejected(gtx layout.Context, th *material.Theme) 
 			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
 			layout.Rigid(material.Body2(th, "The token may have been regenerated, or the room may have changed.").Layout),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
-			layout.Rigid(material.Button(th, d.BtnChangeSettings, "Change settings").Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				return layout.Flex{Axis: layout.Horizontal}.Layout(gtx,
+					layout.Rigid(material.Button(th, d.BtnRejoinNow, "Try again now").Layout),
+					layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+					layout.Rigid(material.Button(th, d.BtnChangeSettings, "Change settings").Layout),
+				)
+			}),
 		)
 	})
 }

@@ -47,6 +47,11 @@ type Client struct {
 	manualServerIP string
 	capturer       capture.Capturer
 
+	// rejoinNow signals the retry loop to skip its current backoff sleep
+	// and try to reconnect immediately. Buffered with cap 1 so consecutive
+	// clicks coalesce. Created in NewClient.
+	rejoinNow chan struct{}
+
 	// Session fields (added Task 21)
 	examToken    string
 	examName     string
@@ -65,6 +70,7 @@ func NewClient() *Client {
 		isConnected:  atomic.Bool{},
 		socket:       nil,
 		sessionState: session.NewStateMachine(),
+		rejoinNow:    make(chan struct{}, 1),
 	}
 	client.isConnected.Store(false)
 	client.isRunning.Store(false)
@@ -135,6 +141,28 @@ func (client *Client) SetManualServerIP(ip string) {
 	client.manualServerIP = strings.TrimSpace(ip)
 }
 
+// Rejoin signals the reconnect goroutine to skip its current backoff sleep and
+// attempt to dial again immediately. Safe to call from any goroutine; multiple
+// rapid calls coalesce.
+func (client *Client) Rejoin() {
+	// Also clear any cached server IP so re-resolution doesn't reuse a
+	// stale address that just failed.
+	client.cachedServerIP = ""
+	select {
+	case client.rejoinNow <- struct{}{}:
+	default:
+	}
+}
+
+// waitOrRejoin sleeps for d unless a Rejoin() request arrives, in which case
+// it returns early.
+func (client *Client) waitOrRejoin(d time.Duration) {
+	select {
+	case <-time.After(d):
+	case <-client.rejoinNow:
+	}
+}
+
 func (client *Client) Start(studentId, studentName string, port int, updateUI func()) {
 	client.studentName = studentName
 	client.isRunning.Store(true)
@@ -168,7 +196,7 @@ func (client *Client) Start(studentId, studentName string, port int, updateUI fu
 						client.onError(err)
 					}
 					client.cachedServerIP = ""
-					time.Sleep(retryDelay)
+					client.waitOrRejoin(retryDelay)
 					retryDelay = min(retryDelay*2, 8*time.Second)
 					continue
 				}
@@ -183,7 +211,7 @@ func (client *Client) Start(studentId, studentName string, port int, updateUI fu
 					client.onError(err)
 				}
 				client.cachedServerIP = ""
-				time.Sleep(retryDelay)
+				client.waitOrRejoin(retryDelay)
 				retryDelay = min(retryDelay*2, 8*time.Second)
 				continue
 			}
@@ -199,7 +227,7 @@ func (client *Client) Start(studentId, studentName string, port int, updateUI fu
 					client.onError(fmt.Errorf("server rejected join: %w", err))
 				}
 				client.socket.Close()
-				time.Sleep(retryDelay)
+				client.waitOrRejoin(retryDelay)
 				retryDelay = min(retryDelay*2, 8*time.Second)
 				continue
 			}
@@ -220,11 +248,19 @@ func (client *Client) Start(studentId, studentName string, port int, updateUI fu
 			for client.isConnected.Load() && client.isRunning.Load() {
 				screenshot, err := client.captureScreen()
 				if err != nil {
+					slog.Warn("screen capture failed", "err", err)
+					if client.onError != nil {
+						client.onError(fmt.Errorf("screen capture failed: %w", err))
+					}
 					client.isConnected.Store(false)
 					break
 				}
-				err = client.SendScreenshot(screenshot)
-				if err != nil {
+				if err := client.SendScreenshot(screenshot); err != nil {
+					slog.Warn("send screenshot failed", "err", err)
+					if client.onError != nil {
+						client.onError(fmt.Errorf("send screenshot failed: %w", err))
+					}
+					client.isConnected.Store(false)
 					break
 				}
 				client.framesSent.Add(1)

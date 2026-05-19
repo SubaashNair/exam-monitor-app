@@ -60,8 +60,14 @@ func newAt(dir, component string) (*Logger, error) {
 		return nil, fmt.Errorf("open %s: %w", logPath, err)
 	}
 
-	// Tee to stderr for WARN+ so terminal users still see problems.
-	writer := io.MultiWriter(f, &levelFilteredStderr{minLevel: slog.LevelWarn})
+	// Tee to stderr for WARN+ so terminal users still see problems. When
+	// EXAM_MONITOR_DEBUG=1, drop the stderr threshold to DEBUG for live
+	// troubleshooting from the terminal.
+	stderrLevel := slog.LevelWarn
+	if os.Getenv("EXAM_MONITOR_DEBUG") == "1" {
+		stderrLevel = slog.LevelDebug
+	}
+	writer := io.MultiWriter(f, &levelFilteredStderr{minLevel: stderrLevel})
 	handler := slog.NewTextHandler(writer, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	})
@@ -117,8 +123,10 @@ func (w *levelFilteredStderr) Write(p []byte) (int, error) {
 }
 
 func containsLevelAtLeast(line []byte, min slog.Level) bool {
-	// slog text handler writes `level=WARN`, `level=ERROR`, etc.
-	for _, tag := range []string{"level=ERROR", "level=WARN"} {
+	// slog text handler writes `level=DEBUG`, `level=INFO`, `level=WARN`,
+	// `level=ERROR`. Honor all four so EXAM_MONITOR_DEBUG=1 actually surfaces
+	// DEBUG records on stderr.
+	for _, tag := range []string{"level=ERROR", "level=WARN", "level=INFO", "level=DEBUG"} {
 		if bytesContains(line, tag) && levelOf(tag) >= min {
 			return true
 		}
@@ -151,6 +159,10 @@ func levelOf(tag string) slog.Level {
 		return slog.LevelError
 	case "level=WARN":
 		return slog.LevelWarn
+	case "level=INFO":
+		return slog.LevelInfo
+	case "level=DEBUG":
+		return slog.LevelDebug
 	default:
 		return slog.LevelInfo
 	}
