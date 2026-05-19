@@ -104,7 +104,7 @@ func (client *Client) SessionState() *session.StateMachine { return client.sessi
 func (client *Client) StudentName() string { return client.studentName }
 
 // FramesSent returns the total number of PICTURE frames the client has
-// successfully sent since the capture loop entered Capturing state.
+// successfully sent since the student joined and capture began.
 func (client *Client) FramesSent() int64 { return client.framesSent.Load() }
 
 // IsConnected reports whether the client currently has an active TCP

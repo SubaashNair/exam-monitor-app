@@ -145,9 +145,11 @@ func (d *DashboardState) Layout(gtx layout.Context, th *material.Theme) layout.D
 
 	state := d.client.SessionState().State()
 
-	// If the client lost its connection mid-exam, show a reconnecting
-	// notice instead of the (now stale) Capturing UI.
-	if !d.client.IsConnected() && state != session.StateWaiting && state != session.StateStopped {
+	// If the client lost its TCP connection, show a Reconnecting notice
+	// instead of the (now stale) banner. Applies in both the lobby
+	// (StateWaiting) and during-exam (StateCapturing/Locked) states; only
+	// StateStopped is carved out because layoutEnded handles that path.
+	if !d.client.IsConnected() && state != session.StateStopped {
 		return d.layoutReconnecting(gtx, th)
 	}
 
