@@ -249,7 +249,16 @@ func (s *Server) registerConnection(id string) int64 {
 	s.activeConnsMu.Lock()
 	defer s.activeConnsMu.Unlock()
 	timestamp := time.Now().UnixNano()
+	_, isReconnect := s.activeConns[id]
 	s.activeConns[id] = timestamp
+	if el := s.EventLog(); el != nil {
+		eventType := "student_joined"
+		details := map[string]any{"at": time.Now().UTC().Format(time.RFC3339)}
+		if isReconnect {
+			eventType = "student_reconnected"
+		}
+		_ = el.Record(eventlog.Event{Type: eventType, StudentID: id, Details: details})
+	}
 	return timestamp
 }
 
@@ -263,6 +272,18 @@ func (s *Server) scheduleStudentRemoval(id string, connTimestamp int64) {
 	// If a newer connection exists (reconnected during grace period), don't remove
 	if currentTimestamp, exists := s.activeConns[id]; exists {
 		if currentTimestamp == connTimestamp {
+			if el := s.EventLog(); el != nil {
+				gap := time.Since(time.Unix(0, connTimestamp))
+				_ = el.Record(eventlog.Event{
+					Type:      "student_disconnected",
+					StudentID: id,
+					Details: map[string]any{
+						"at":                         time.Now().UTC().Format(time.RFC3339),
+						"gap_seconds":                int(gap.Seconds()),
+						"removed_after_grace_period": true,
+					},
+				})
+			}
 			delete(s.activeConns, id)
 			s.studentUtil.RemoveStudent(id)
 		}
