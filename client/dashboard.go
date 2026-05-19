@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,12 +21,13 @@ import (
 )
 
 type DashboardState struct {
-	client    *Client
-	BtnStop   *widget.Clickable
-	BtnRetry  *widget.Clickable
-	BtnCancel *widget.Clickable
-	Stop      func()
-	UpdateUI  func()
+	client            *Client
+	BtnStop           *widget.Clickable
+	BtnRetry          *widget.Clickable
+	BtnCancel         *widget.Clickable
+	BtnChangeSettings *widget.Clickable
+	Stop              func()
+	UpdateUI          func()
 	errorMsg  string
 
 	// UI helpers wired in by main.go (Task 28)
@@ -55,12 +57,13 @@ var (
 func NewDashboardState(stop func(), updateUI func()) *DashboardState {
 	client := NewClient()
 	ds := &DashboardState{
-		client:    client,
-		BtnStop:   new(widget.Clickable),
-		BtnRetry:  new(widget.Clickable),
-		BtnCancel: new(widget.Clickable),
-		Stop:      stop,
-		UpdateUI:  updateUI,
+		client:            client,
+		BtnStop:           new(widget.Clickable),
+		BtnRetry:          new(widget.Clickable),
+		BtnCancel:         new(widget.Clickable),
+		BtnChangeSettings: new(widget.Clickable),
+		Stop:              stop,
+		UpdateUI:          updateUI,
 	}
 
 	client.SetCallbacks(
@@ -134,6 +137,12 @@ func (d *DashboardState) Layout(gtx layout.Context, th *material.Theme) layout.D
 		d.Stop()
 		d.client.Stop()
 	}
+	// FR-14: Change settings stops the client and returns to JoinView.
+	if d.BtnChangeSettings.Clicked(gtx) {
+		d.errorMsg = ""
+		d.client.Stop()
+		d.Stop()
+	}
 
 	// The dashboard's own examEnded flag takes precedence over the session
 	// state machine. If we received TypeExamStop OR detected a disconnect
@@ -141,6 +150,16 @@ func (d *DashboardState) Layout(gtx layout.Context, th *material.Theme) layout.D
 	// the state machine reports.
 	if _, _, _, ended, _ := d.examInfo(); ended {
 		return d.layoutEnded(gtx, th)
+	}
+
+	// FR-14: route to layoutRejected when the server rejected our handshake.
+	// The errorMsg is set by client.onError("server rejected join: ..."). We
+	// distinguish this from transient errors (mDNS timeout, dial failure) by
+	// checking the prefix; only handshake rejection should show the dedicated
+	// "Change settings" view, because transient errors clear themselves on
+	// the next retry attempt.
+	if d.errorMsg != "" && strings.Contains(d.errorMsg, "server rejected") {
+		return d.layoutRejected(gtx, th)
 	}
 
 	state := d.client.SessionState().State()
@@ -210,6 +229,25 @@ func (d *DashboardState) layoutReconnecting(gtx layout.Context, th *material.The
 			layout.Rigid(material.H6(th, headline).Layout),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
 			layout.Rigid(material.Body1(th, subText).Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
+			layout.Rigid(material.Button(th, d.BtnChangeSettings, "Change settings").Layout),
+		)
+	})
+}
+
+// layoutRejected renders the "server rejected your join" notice with a
+// button that returns the user to the JoinView so they can change their
+// credentials (token, room, server IP) and try again.
+func (d *DashboardState) layoutRejected(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	return layout.UniformInset(unit.Dp(24)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+			layout.Rigid(material.H6(th, "⚠ Unable to join").Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+			layout.Rigid(material.Body1(th, d.errorMsg).Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+			layout.Rigid(material.Body2(th, "The token may have been regenerated, or the room may have changed.").Layout),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(16)}.Layout),
+			layout.Rigid(material.Button(th, d.BtnChangeSettings, "Change settings").Layout),
 		)
 	})
 }
