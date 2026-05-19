@@ -126,6 +126,40 @@ Messages from instructor to students must arrive within 1 s and be visible for 5
 
 ---
 
+#### FR-13 — Capture begins on Join, not on Start Exam
+
+Once the student's TCP handshake completes, screen capture starts and frames flow to the server immediately. The instructor's **Start Exam** action no longer toggles capture — it ONLY records the `exam_started` event, starts the elapsed timer, and switches the student's banner from a calm "Connected" state to the red "EXAM IN PROGRESS" state.
+
+**Why:** Clarified mid-stage (2026-05-19) after testing v0.2.0: the user's mental model is "if students have handed in the token, they've committed; monitor them immediately." The Phase 1 design gated capture on Start Exam for *privacy during the lobby*, but in real classroom deployments students are physically present and visible to the instructor anyway — the lobby gate created confusion ("why isn't sharing working?") rather than meaningful privacy. This FR explicitly breaks the Phase 1 capture-on-Capturing contract — see §9 risk note.
+
+**Done when:**
+- Client capture loop runs whenever `client.IsConnected()` is true. The previous `client.sessionState.IsCapturing()` gate is removed from `client/client.go`'s `Start` method's inner loop.
+- The client tracks `examActive` (a new `atomic.Bool` field on `Client`) which is set to true on `TypeExamStart` and false on `TypeExamStop`. This drives the banner display, not the capture gate.
+- Server accepts PICTURE frames from any registered student regardless of the server-tracked `registeredConn.state`. The existing `TestLateFrameRejected_WhenServerNotCapturing` test (if any) is updated to reflect the new contract OR removed; a new test confirms frames from a Waiting-state student are accepted.
+- On the **teacher dashboard**, a student tile fills with live capture as soon as the student joins, before Start Exam is clicked. The tile's connection dot (FR-2) is green from join onward.
+- On the **student client**, the dashboard's `layoutCapturing` view branches on `examActive`:
+  - `examActive == false` (lobby, just joined): **green** banner `🟢 CONNECTED — Your screen is being shared. Waiting for instructor to start the exam.` No elapsed timer.
+  - `examActive == true` (Start Exam clicked): existing red banner `🔴 EXAM IN PROGRESS — <name> — Xs elapsed` with the FR-2 elapsed counter.
+- Start Exam still emits `exam_started` to the eventlog and broadcasts `TypeExamStart` to all clients — the change is only that capture was already running.
+- The session state machine on the client still exists, but its `Capturing` state no longer means "send frames" — it means "exam is in progress" (semantic rename TBD; can keep the constant name and just rewire usage). The client's `Waiting` state is no longer visible — once handshake succeeds, the client is in `Connected (pre-exam)`; the state machine's `Capturing` state coincides with `examActive=true`.
+
+---
+
+#### FR-14 — Manual rejoin / Change settings button
+
+When the client is in the Reconnecting view (FR-2) OR has been rejected by the server (token mismatch, kick), the user can click a **Change settings** button to return to the JoinView, modify credentials, and try again — without quitting and relaunching the app.
+
+**Why:** Today there's no UI exit from a stuck reconnect loop. If the instructor regenerated the token mid-session, the student is stranded — has to Cmd+Q the app and relaunch. The credentials persistence (`LoadFormData`) already exists; we just need to surface a path back to the JoinView.
+
+**Done when:**
+- `client/dashboard.go`'s `layoutReconnecting` view adds a "Change settings" button below the "Trying to reconnect…" subtext.
+- Click on Change settings: calls `d.client.Stop()` (cancels the reconnect loop and closes any open TCP socket) → calls the existing `d.Stop()` callback to flip the AppState screen back to `"join"` → the JoinView shows with form fields pre-populated from `LoadFormData()`.
+- A new dedicated **handshake-rejected** view: when `TypeTokenHandshakeReject` is received from the server (or when the existing `onError` callback fires with a "server rejected join" error), the dashboard renders this view instead of looping the Reconnecting banner. It shows the rejection reason ("Token expired, regenerated, or rejected by instructor") and the same Change settings button.
+- The eventlog should NOT record `student_left_permanently` for this path — the student is retrying, not abandoning. The existing `student_disconnected` row from FR-2 covers the visible side-effect.
+- Acceptance test: start an exam with token A. Have the student join. On the server, regenerate the token (token B). The student's session continues but a hypothetical re-handshake fails. The student clicks Change settings, types token B, clicks Join. Connection resumes; tile re-appears on dashboard.
+
+---
+
 ### v0.2.1 — "Multi-monitor + Diagnostics + Resilience"
 
 #### FR-4 — Multi-display capture verified end-to-end
@@ -326,9 +360,9 @@ Every FR has a `Done when:` block listing 2–4 mechanically-checkable items. "D
 
 | Version | Items | Estimated effort | Trigger to next |
 |---|---|---|---|
-| **v0.2.0** | FR-1, FR-2, FR-3 | ~3 days (2026-05-19 → 2026-05-22) | All Done-When blocks for FR-1,2,3 verified manually on macOS + Windows. |
-| **v0.2.1** | FR-4, FR-5, FR-6, FR-7 | ~3 days (2026-05-22 → 2026-05-25) | Same, for FR-4–7. |
-| **v0.2.2** | FR-8, FR-9, FR-10, FR-11, FR-12 | ~2 days (2026-05-25 → 2026-05-27) | All 12 FRs verified. Tag "v0.2.x feature-complete." |
+| **v0.2.0** | FR-1, FR-2, FR-3, FR-13, FR-14 | ~4 days (2026-05-19 → 2026-05-23). Scope expanded mid-stage to include the capture-on-join model change + manual rejoin button. | All Done-When blocks for FR-1, 2, 3, 13, 14 verified manually on macOS + Windows. |
+| **v0.2.1** | FR-4, FR-5, FR-6, FR-7 | ~3 days (2026-05-23 → 2026-05-26) | Same, for FR-4–7. |
+| **v0.2.2** | FR-8, FR-9, FR-10, FR-11, FR-12 | ~2 days (2026-05-26 → 2026-05-28) | All 14 FRs verified. Tag "v0.2.x feature-complete." |
 | **v0.3.0+** | Wire-protocol changes, code signing, Linux Wayland native | Out of scope of this doc |
 
 ---
@@ -346,6 +380,8 @@ Every FR has a `Done when:` block listing 2–4 mechanically-checkable items. "D
 5. **Performance on 20+ students** — never tested with > 2 students simultaneously. Bandwidth scaling: 4 FPS × ~100 KB × 20 = 8 MB/s server-side ingest. Should be fine on Ethernet, may be tight on shared WiFi. **Action:** measure during v0.2.2 sign-off; document the per-student bandwidth in the README.
 
 6. **Crash recovery state** — if the server crashes mid-exam, the eventlog SQLite is interrupted. SQLite WAL mode would help. **Action:** confirm WAL mode is enabled in `eventlog.Open()` (or enable it) as a small NFR-6 addition.
+
+7. **Phase 1 capture-gate contract broken by FR-13** — Phase 1's spec §10 Done-Definition item 2 required "no frames captured outside Capturing/Locked." FR-13 explicitly breaks that contract: frames flow from the moment a student is connected, regardless of session state. The change is intentional and documented in FR-13's "Why" section. Downstream impact: any test that pinned the original capture-gate (e.g., `TestLateFrameRejected_WhenServerNotCapturing`, the e2e test's frame-rejection assertion) must be updated or removed during FR-13 implementation. The Phase 1 spec doc itself is historical — not amended here — but FR-13 supersedes that contract for v0.2.0 and beyond.
 
 ---
 
