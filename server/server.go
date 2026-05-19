@@ -181,6 +181,19 @@ func (s *Server) BroadcastControlAll(typ uint16, payload any) error {
 	return nil
 }
 
+// ConnectedStudentIDs returns the list of student IDs currently in the
+// registered-connection map. Used by sendMessage to log delivered_to for
+// audit trail.
+func (s *Server) ConnectedStudentIDs() []string {
+	s.connsMu.RLock()
+	defer s.connsMu.RUnlock()
+	ids := make([]string, 0, len(s.conns))
+	for id := range s.conns {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // SendToStudent sends a control frame to one student. If the student is
 // not registered, returns an error.
 func (s *Server) SendToStudent(id string, typ uint16, payload any) error {

@@ -642,13 +642,22 @@ func (d *DashboardState) sendMessage(toAll bool, targetID, body string) {
 		}
 	}
 	if el := d.server.EventLog(); el != nil {
-		_ = el.Record(eventlog.Event{
+		var deliveredTo []string
+		if toAll {
+			deliveredTo = d.server.ConnectedStudentIDs()
+		} else {
+			deliveredTo = []string{target}
+		}
+		if err := el.Record(eventlog.Event{
 			Type: "message_broadcast",
 			Details: map[string]any{
-				"to":   ifThen(toAll, "all", target),
-				"body": body,
+				"to":           ifThen(toAll, "all", target),
+				"body":         body,
+				"delivered_to": deliveredTo,
 			},
-		})
+		}); err != nil {
+			slog.Warn("eventlog write failed", "event", "message_broadcast", "err", err)
+		}
 	}
 }
 
