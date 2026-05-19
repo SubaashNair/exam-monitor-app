@@ -133,6 +133,7 @@ func run(w *app.Window) error {
 			w.Invalidate()
 		})
 	})
+	joinView.SetInvalidate(w.Invalidate)
 
 	for {
 		event := w.Event()

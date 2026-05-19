@@ -1,7 +1,12 @@
 package main
 
 import (
+	"fmt"
+	"image/color"
+	"net"
 	"strings"
+	"sync"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/unit"
@@ -16,6 +21,7 @@ type JoinView struct {
 	ServerIPEditor *widget.Editor
 	TokenEditor    *widget.Editor
 	BtnStart       *widget.Clickable
+	BtnTestConn    *widget.Clickable
 	OnClick        func(sid, name string, room int, roomName, serverIP, examToken string)
 
 	idError    string
@@ -25,6 +31,13 @@ type JoinView struct {
 	tokenError string
 
 	submitAttempted bool
+
+	// Connection diagnostic state
+	testMu         sync.Mutex
+	testResult     string     // human-readable last test outcome
+	testResultOK   bool       // determines colour
+	testInProgress bool       // grays out the button while a dial is running
+	invalidate     func()     // window invalidate callback (set via SetInvalidate)
 }
 
 func NewJoinView(start func(sid, name string, room int, roomName, serverIP, examToken string)) *JoinView {
@@ -35,6 +48,7 @@ func NewJoinView(start func(sid, name string, room int, roomName, serverIP, exam
 		ServerIPEditor: new(widget.Editor),
 		TokenEditor:    new(widget.Editor),
 		BtnStart:       new(widget.Clickable),
+		BtnTestConn:    new(widget.Clickable),
 		OnClick:        start,
 	}
 
@@ -110,6 +124,83 @@ func (h *JoinView) isValid() bool {
 	return true
 }
 
+// SetInvalidate registers the window invalidate callback so async test
+// results trigger a redraw. main.go calls this after window construction.
+func (h *JoinView) SetInvalidate(fn func()) { h.invalidate = fn }
+
+// runConnectivityTest dials Server IP + room-derived port with a 3s timeout
+// and updates testResult under mutex. Runs in a goroutine so the UI thread
+// is never blocked.
+func (h *JoinView) runConnectivityTest() {
+	ipText := strings.TrimSpace(h.ServerIPEditor.Text())
+	roomText := strings.TrimSpace(h.RoomPicker.Value())
+
+	if ipText == "" {
+		h.testMu.Lock()
+		h.testResult = "Enter a Server IP to test (auto-discovery can't be tested from here)."
+		h.testResultOK = false
+		h.testInProgress = false
+		h.testMu.Unlock()
+		if h.invalidate != nil {
+			h.invalidate()
+		}
+		return
+	}
+	if _, err := parseManualIP(ipText); err != nil {
+		h.testMu.Lock()
+		h.testResult = fmt.Sprintf("Invalid Server IP: %s", err.Error())
+		h.testResultOK = false
+		h.testInProgress = false
+		h.testMu.Unlock()
+		if h.invalidate != nil {
+			h.invalidate()
+		}
+		return
+	}
+	if roomText == "" {
+		h.testMu.Lock()
+		h.testResult = "Pick a Room first so we know which port to test."
+		h.testResultOK = false
+		h.testInProgress = false
+		h.testMu.Unlock()
+		if h.invalidate != nil {
+			h.invalidate()
+		}
+		return
+	}
+
+	port := RoomNameToPort(roomText)
+	target := net.JoinHostPort(ipText, fmt.Sprintf("%d", port))
+
+	h.testMu.Lock()
+	h.testInProgress = true
+	h.testResult = fmt.Sprintf("Testing %s …", target)
+	h.testResultOK = false
+	h.testMu.Unlock()
+	if h.invalidate != nil {
+		h.invalidate()
+	}
+
+	go func() {
+		conn, err := net.DialTimeout("tcp", target, 3*time.Second)
+
+		h.testMu.Lock()
+		defer h.testMu.Unlock()
+		h.testInProgress = false
+		if err != nil {
+			h.testResult = fmt.Sprintf("✗ %s unreachable: %s", target, err.Error())
+			h.testResultOK = false
+		} else {
+			_ = conn.Close()
+			h.testResult = fmt.Sprintf("✓ Reached %s — server is accepting connections.", target)
+			h.testResultOK = true
+		}
+		if h.invalidate != nil {
+			h.invalidate()
+		}
+	}()
+}
+
 func (h *JoinView) handleSubmit() {
 	h.submitAttempted = true
 	if h.validate() {
@@ -131,6 +222,15 @@ func (h *JoinView) Layout(gtx layout.Context, th *material.Theme) layout.Dimensi
 	if h.BtnStart.Clicked(gtx) {
 		h.handleSubmit()
 	}
+	if h.BtnTestConn.Clicked(gtx) {
+		h.runConnectivityTest()
+	}
+
+	h.testMu.Lock()
+	testResult := h.testResult
+	testResultOK := h.testResultOK
+	testInProgress := h.testInProgress
+	h.testMu.Unlock()
 
 	var idErr, nameErr, roomErr, ipErr, tokenErr string
 	if h.submitAttempted {
@@ -197,6 +297,35 @@ func (h *JoinView) Layout(gtx layout.Context, th *material.Theme) layout.Dimensi
 					return FormRow(gtx, "Server IP (optional)", th, func(gtx layout.Context) layout.Dimensions {
 						return TextEditorWithError(th, h.ServerIPEditor, "Leave blank for auto-discovery", ipErr)(gtx)
 					})
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Spacer{Height: unit.Dp(8)}.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							btn := material.Button(th, h.BtnTestConn, "Test connection")
+							btn.TextSize = unit.Sp(13)
+							if testInProgress {
+								btn.Background = DisabledBg
+								btn.Color = DisabledFg
+							}
+							return btn.Layout(gtx)
+						}),
+						layout.Rigid(layout.Spacer{Width: unit.Dp(12)}.Layout),
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							if testResult == "" {
+								return layout.Dimensions{}
+							}
+							lbl := material.Body2(th, testResult)
+							if testResultOK {
+								lbl.Color = color.NRGBA{R: 22, G: 163, B: 74, A: 255} // emerald
+							} else {
+								lbl.Color = ErrorColor
+							}
+							return lbl.Layout(gtx)
+						}),
+					)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					return layout.Spacer{Height: unit.Dp(16)}.Layout(gtx)
