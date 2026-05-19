@@ -16,14 +16,43 @@ import (
 	"github.com/exam-gaurd/server/session"
 )
 
-// connectionStaleAfter — a student is considered "disconnected" if no frame
-// has arrived in this window. Frames are sent every 500 ms (UPDATE_INTERVAL
-// on the client), so 3 s ~= 6 missed frames before we flip the dot to red.
-const connectionStaleAfter = 3 * time.Second
+// ConnState — three-tier classification used by the per-tile connection
+// dot. v0.2.0 spec FR-2: green when streaming, yellow during the 3-8s
+// grace window, red after.
+type ConnState int
+
+const (
+	ConnStateLive  ConnState = iota // last frame within 3s
+	ConnStateStale                  // 3-8s: in the reconnect grace window
+	ConnStateLost                   // >= 8s: connection considered dropped
+)
+
+const (
+	connStaleThreshold = 3 * time.Second
+	connLostThreshold  = 8 * time.Second
+)
+
+// classifyConnection returns the ConnState for a given last-frame Timestamp.
+// A zero Timestamp (no frame ever) is treated as Lost.
+func classifyConnection(lastFrame time.Time) ConnState {
+	if lastFrame.IsZero() {
+		return ConnStateLost
+	}
+	since := time.Since(lastFrame)
+	switch {
+	case since < connStaleThreshold:
+		return ConnStateLive
+	case since < connLostThreshold:
+		return ConnStateStale
+	default:
+		return ConnStateLost
+	}
+}
 
 var (
-	dotConnected    = color.NRGBA{R: 16, G: 185, B: 129, A: 255}  // emerald-500
-	dotDisconnected = color.NRGBA{R: 220, G: 38, B: 38, A: 255}   // red-600
+	dotLive  = color.NRGBA{R: 16, G: 185, B: 129, A: 255}  // emerald-500
+	dotStale = color.NRGBA{R: 234, G: 179, B: 8, A: 255}   // yellow-500
+	dotLost  = color.NRGBA{R: 220, G: 38, B: 38, A: 255}   // red-600
 )
 
 // Card colors
@@ -171,13 +200,19 @@ func layoutStudentImage(gtx layout.Context, th *material.Theme, student *Student
 	)
 }
 
-// connectionDot renders a small filled circle in green (connected) or red
-// (no recent frames). Sized at 10 dp so it sits comfortably next to the name.
-func connectionDot(gtx layout.Context, connected bool) layout.Dimensions {
+// connectionDot renders a small filled circle reflecting the three-tier
+// connection state: green (live), yellow (stale/grace window), red (lost).
+// Sized at 10 dp so it sits comfortably next to the name.
+func connectionDot(gtx layout.Context, st ConnState) layout.Dimensions {
 	size := gtx.Dp(unit.Dp(10))
-	col := dotConnected
-	if !connected {
-		col = dotDisconnected
+	var col color.NRGBA
+	switch st {
+	case ConnStateLive:
+		col = dotLive
+	case ConnStateStale:
+		col = dotStale
+	default:
+		col = dotLost
 	}
 	defer clip.Ellipse{Max: image.Pt(size, size)}.Push(gtx.Ops).Pop()
 	paint.ColorOp{Color: col}.Add(gtx.Ops)
@@ -186,18 +221,18 @@ func connectionDot(gtx layout.Context, connected bool) layout.Dimensions {
 }
 
 func layoutStudentInfo(gtx layout.Context, th *material.Theme, student *Student) layout.Dimensions {
-	// Connected if the Timestamp on the most recent frame is recent. The
-	// Student struct refreshes Timestamp via UpdateImage on every PICTURE
-	// frame the server accepts, so this reflects "frames flowing in the
-	// last N seconds" rather than just "TCP socket is open."
-	connected := !student.Timestamp.IsZero() && time.Since(student.Timestamp) < connectionStaleAfter
+	// Classify the connection state based on time since the last accepted
+	// PICTURE frame. The Student struct refreshes Timestamp via UpdateImage,
+	// so this reflects "frames flowing in the last N seconds" rather than
+	// just "TCP socket is open."
+	state := classifyConnection(student.Timestamp)
 	return layout.Inset{Top: unit.Dp(10)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(
 			gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-						return connectionDot(gtx, connected)
+						return connectionDot(gtx, state)
 					}),
 					layout.Rigid(layout.Spacer{Width: unit.Dp(6)}.Layout),
 					layout.Rigid(func(gtx layout.Context) layout.Dimensions {
