@@ -35,12 +35,13 @@ const (
 )
 
 type Client struct {
-	isRunning      atomic.Bool
-	isConnected    atomic.Bool
-	framesSent     atomic.Int64
-	socket         *net.TCPConn
-	lastSentTime   atomic.Value
-	onConnected    func()
+	isRunning        atomic.Bool
+	isConnected      atomic.Bool
+	framesSent       atomic.Int64
+	socket           *net.TCPConn
+	lastSentTime     atomic.Value
+	disconnectedAt   atomic.Value // time.Time; set when isConnected drops false mid-run
+	onConnected      func()
 	onError        func(error)
 	cachedServerIP string
 	manualServerIP string
@@ -111,6 +112,17 @@ func (client *Client) FramesSent() int64 { return client.framesSent.Load() }
 // "Reconnecting…" notice when the connection drops mid-exam.
 func (client *Client) IsConnected() bool { return client.isConnected.Load() }
 
+// DisconnectedAt returns the wall-clock time the client's TCP connection
+// last dropped. Returns zero time if the client is currently connected
+// or has never been disconnected.
+func (client *Client) DisconnectedAt() time.Time {
+	v := client.disconnectedAt.Load()
+	if v == nil {
+		return time.Time{}
+	}
+	return v.(time.Time)
+}
+
 func (client *Client) GetLastSentTime() time.Time {
 	if t := client.lastSentTime.Load(); t != nil {
 		return t.(time.Time)
@@ -137,6 +149,7 @@ func (client *Client) Start(studentId, studentName string, port int, updateUI fu
 		}
 
 		for client.isRunning.Load() {
+			client.disconnectedAt.Store(time.Now())
 			client.isConnected.Store(false)
 			updateUI()
 
@@ -192,6 +205,7 @@ func (client *Client) Start(studentId, studentName string, port int, updateUI fu
 			}
 
 			client.isConnected.Store(true)
+			client.disconnectedAt.Store(time.Time{})
 			if client.onConnected != nil {
 				client.onConnected()
 			}

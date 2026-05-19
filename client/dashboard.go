@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -185,11 +186,28 @@ func (d *DashboardState) layoutEnded(gtx layout.Context, th *material.Theme) lay
 // the session state machine still thinks we're Capturing/Locked but the TCP
 // connection has dropped.
 func (d *DashboardState) layoutReconnecting(gtx layout.Context, th *material.Theme) layout.Dimensions {
+	disconnAt := d.client.DisconnectedAt()
+	elapsed := time.Duration(0)
+	if !disconnAt.IsZero() {
+		if since := time.Since(disconnAt); since >= 0 && since < 10*time.Minute {
+			elapsed = since
+		}
+	}
+
+	// Schedule the next render in 500ms so the elapsed counter ticks.
+	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(500 * time.Millisecond)})
+
+	headline := "⚠ Connection lost"
+	subText := "Trying to reconnect to your instructor…"
+	if elapsed > 0 {
+		subText = fmt.Sprintf("Trying to reconnect to your instructor… (%ds)", int(elapsed.Seconds()))
+	}
+
 	return layout.UniformInset(unit.Dp(24)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(material.H6(th, "⚠ Connection lost").Layout),
+			layout.Rigid(material.H6(th, headline).Layout),
 			layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-			layout.Rigid(material.Body1(th, "Trying to reconnect to your instructor…").Layout),
+			layout.Rigid(material.Body1(th, subText).Layout),
 		)
 	})
 }
