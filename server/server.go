@@ -52,8 +52,9 @@ type Server struct {
 	connsMu sync.RWMutex
 
 	// NEW (Task 11):
-	eventLog  *eventlog.EventLog
-	examsRoot string
+	eventLog   *eventlog.EventLog
+	eventLogMu sync.RWMutex
+	examsRoot  string
 }
 
 type StudentUtil interface {
@@ -89,10 +90,16 @@ func (s *Server) ExamSession() *session.ExamSession {
 }
 
 func (s *Server) SetEventLog(el *eventlog.EventLog) {
+	s.eventLogMu.Lock()
+	defer s.eventLogMu.Unlock()
 	s.eventLog = el
 }
 
-func (s *Server) EventLog() *eventlog.EventLog { return s.eventLog }
+func (s *Server) EventLog() *eventlog.EventLog {
+	s.eventLogMu.RLock()
+	defer s.eventLogMu.RUnlock()
+	return s.eventLog
+}
 
 func (s *Server) registerConn(id string, rc *registeredConn) {
 	s.connsMu.Lock()
@@ -257,7 +264,9 @@ func (s *Server) registerConnection(id string) int64 {
 		if isReconnect {
 			eventType = "student_reconnected"
 		}
-		_ = el.Record(eventlog.Event{Type: eventType, StudentID: id, Details: details})
+		if err := el.Record(eventlog.Event{Type: eventType, StudentID: id, Details: details}); err != nil {
+			slog.Warn("eventlog write failed", "event", eventType, "student", id, "err", err)
+		}
 	}
 	return timestamp
 }
@@ -274,7 +283,7 @@ func (s *Server) scheduleStudentRemoval(id string, connTimestamp int64) {
 		if currentTimestamp == connTimestamp {
 			if el := s.EventLog(); el != nil {
 				gap := time.Since(time.Unix(0, connTimestamp))
-				_ = el.Record(eventlog.Event{
+				if err := el.Record(eventlog.Event{
 					Type:      "student_disconnected",
 					StudentID: id,
 					Details: map[string]any{
@@ -282,7 +291,9 @@ func (s *Server) scheduleStudentRemoval(id string, connTimestamp int64) {
 						"gap_seconds":                int(gap.Seconds()),
 						"removed_after_grace_period": true,
 					},
-				})
+				}); err != nil {
+					slog.Warn("eventlog write failed", "event", "student_disconnected", "student", id, "err", err)
+				}
 			}
 			delete(s.activeConns, id)
 			s.studentUtil.RemoveStudent(id)
