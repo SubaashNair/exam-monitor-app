@@ -213,13 +213,18 @@ func (d *DashboardState) layoutReconnecting(gtx layout.Context, th *material.The
 }
 
 func (d *DashboardState) layoutWaiting(gtx layout.Context, th *material.Theme) layout.Dimensions {
-	return layout.UniformInset(unit.Dp(16)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-			layout.Rigid(material.H6(th, "Waiting for your instructor to start the exam…").Layout),
-			layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
-			layout.Rigid(material.Body1(th, "Connected as: "+d.client.StudentName()).Layout),
-		)
-	})
+	// FR-13: capture is already running once we've joined. Show a green
+	// "Connected — sharing active" banner instead of the old passive
+	// "waiting for instructor" message. The status card below confirms
+	// frames are flowing.
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return ui.PreExamBanner(gtx, th)
+		}),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return d.layoutStatusCard(gtx, th)
+		}),
+	)
 }
 
 func (d *DashboardState) layoutCapturing(gtx layout.Context, th *material.Theme) layout.Dimensions {

@@ -79,25 +79,54 @@ func tinyJPEG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-func TestLateFrameRejected_WhenServerNotCapturing(t *testing.T) {
+// TestFrameAcceptedDuringWaiting_RejectedAfterStop pins the FR-13 contract:
+// frames are accepted during StateWaiting (lobby) and StateCapturing, but
+// rejected once the exam session reaches StateStopped.
+func TestFrameAcceptedDuringWaiting_RejectedAfterStop(t *testing.T) {
 	srv, conn := newConnectedServer(t)
 	tok := srv.examSession.Token.Canonical()
 	finishHandshake(t, conn, tok)
 
-	// Server is in Waiting (never started). Send NAME, then a PICTURE.
+	// Send NAME first so the server registers the student.
 	if _, err := conn.Write(packFrame(0, []byte("S001###Aisha"))); err != nil {
 		t.Fatalf("write NAME: %v", err)
 	}
+
+	// FR-13: send a PICTURE while server is still in Waiting state.
+	// UpdateImage SHOULD be called — frames are no longer gated on Capturing.
 	frame := tinyJPEG(t)
 	if _, err := conn.Write(packFrame(2, frame)); err != nil {
-		t.Fatalf("write PICTURE: %v", err)
+		t.Fatalf("write PICTURE (waiting): %v", err)
 	}
-
-	// Wait for the server to process. The student util's UpdateImage should
-	// NOT have been called.
 	time.Sleep(200 * time.Millisecond)
 	su := srv.studentUtil.(*fakeStudentUtil)
-	if su.imageCalls != 0 {
-		t.Errorf("UpdateImage called %d times; want 0 when server is not Capturing", su.imageCalls)
+	su.mu.Lock()
+	callsAfterWaiting := su.imageCalls
+	su.mu.Unlock()
+	if callsAfterWaiting < 1 {
+		t.Errorf("UpdateImage called %d times during Waiting; want >=1 (FR-13)", callsAfterWaiting)
+	}
+
+	// Transition server to Stopped.
+	if _, err := srv.examSession.Machine.Apply(session.EventStartExam); err != nil {
+		t.Fatalf("apply ExamStart: %v", err)
+	}
+	if _, err := srv.examSession.Machine.Apply(session.EventStopExam); err != nil {
+		t.Fatalf("apply ExamStop: %v", err)
+	}
+
+	// Send another PICTURE after Stop — should be rejected.
+	su.mu.Lock()
+	callsBeforeStop := su.imageCalls
+	su.mu.Unlock()
+	if _, err := conn.Write(packFrame(2, frame)); err != nil {
+		t.Fatalf("write PICTURE (stopped): %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	su.mu.Lock()
+	callsAfterStop := su.imageCalls
+	su.mu.Unlock()
+	if callsAfterStop != callsBeforeStop {
+		t.Errorf("UpdateImage incremented after Stop: before=%d after=%d; want unchanged", callsBeforeStop, callsAfterStop)
 	}
 }

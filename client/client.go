@@ -218,20 +218,18 @@ func (client *Client) Start(studentId, studentName string, port int, updateUI fu
 			go client.readControlFrames()
 
 			for client.isConnected.Load() && client.isRunning.Load() {
-				if client.sessionState.IsCapturing() {
-					screenshot, err := client.captureScreen()
-					if err != nil {
-						client.isConnected.Store(false)
-						break
-					}
-					err = client.SendScreenshot(screenshot)
-					if err != nil {
-						break
-					}
-					client.framesSent.Add(1)
-					client.lastSentTime.Store(time.Now())
-					updateUI()
+				screenshot, err := client.captureScreen()
+				if err != nil {
+					client.isConnected.Store(false)
+					break
 				}
+				err = client.SendScreenshot(screenshot)
+				if err != nil {
+					break
+				}
+				client.framesSent.Add(1)
+				client.lastSentTime.Store(time.Now())
+				updateUI()
 				time.Sleep(UPDATE_INTERVAL)
 			}
 

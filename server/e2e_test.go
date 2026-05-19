@@ -142,11 +142,11 @@ func TestE2E_WaitingToCapturingToStopped(t *testing.T) {
 	// Drain any incoming frames during waiting (server may broadcast nothing).
 	go drain(conn) // best-effort sink
 
-	// Send a PICTURE while still in Waiting — should be rejected.
+	// FR-13: send a PICTURE while still in Waiting — should be accepted.
 	writeFrame(t, conn, 2, tinyJPEGBytes(t))
 	time.Sleep(200 * time.Millisecond)
-	if su := srv.studentUtil.(*fakeStudentUtil); imageCallCount(su) != 0 {
-		t.Errorf("UpdateImage called %d times during Waiting; want 0", imageCallCount(su))
+	if su := srv.studentUtil.(*fakeStudentUtil); imageCallCount(su) < 1 {
+		t.Errorf("UpdateImage called %d times during Waiting; want >=1 (FR-13)", imageCallCount(su))
 	}
 
 	// Teacher clicks Start.

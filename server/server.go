@@ -389,10 +389,11 @@ func (s *Server) handleStudent(socket *net.TCPConn) {
 		case 1:
 			slog.Debug("student message", "id", id, "msg", string(data[:dataSize]))
 		case 2:
-			// PICTURE: only accept while server says Capturing/Locked.
+			// PICTURE: accept during Waiting, Capturing, or Locked (FR-13).
+			// Reject only when no exam session exists or the session is Stopped.
 			es := s.ExamSession()
-			if es == nil || (es.Machine.State() != session.StateCapturing && es.Machine.State() != session.StateLocked) {
-				slog.Debug("late frame rejected", "id", id, "server_state", func() string {
+			if es == nil || es.Machine.State() == session.StateStopped {
+				slog.Debug("frame rejected (no active exam)", "id", id, "server_state", func() string {
 					if es == nil {
 						return "no_session"
 					}
